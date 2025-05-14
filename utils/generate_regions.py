@@ -15,7 +15,7 @@ def paste_shape_no_overlap(background, shape_path, side, existing_bboxes, scale_
     bg_width, bg_height = background.size
     shape_orig = Image.open(shape_path).convert("RGBA")
 
-    # === 1. 缩放 ===
+    # === Scaling ===
     max_scale_w = (bg_width * 0.3) / shape_orig.width
     max_scale_h = (bg_height * 0.8) / shape_orig.height
     safe_scale = min(scale_factor, max_scale_w, max_scale_h, 1.0)
@@ -24,7 +24,7 @@ def paste_shape_no_overlap(background, shape_path, side, existing_bboxes, scale_
         Image.LANCZOS
     )
 
-    # === 2. 40% 概率随机镜像 ===
+    # === Random Mirror ===
     if random.random() < 0.4:
         flip_mode = random.choice(["horizontal", "vertical"])
         if flip_mode == "horizontal":
@@ -32,7 +32,7 @@ def paste_shape_no_overlap(background, shape_path, side, existing_bboxes, scale_
         else:
             shape = shape.transpose(Image.FLIP_TOP_BOTTOM)
 
-    # === 3. 40% 概率平行四边形拉伸 ===
+    # === Stretch ===
     if random.random() < 0.4:
         dx = random.uniform(-0.2, 0.2)
         dy = random.uniform(-0.2, 0.2)
@@ -45,14 +45,14 @@ def paste_shape_no_overlap(background, shape_path, side, existing_bboxes, scale_
             fillcolor=(0, 0, 0, 0)
         )
 
-    # === 4. 40% 概率旋转 ===
+    # === Rotation ===
     if random.random() < 0.4:
         angle = random.uniform(-30, 30)
         shape = shape.rotate(angle, expand=True)
 
     shape_width, shape_height = shape.size
 
-    # === 5. 区域限制 ===
+    # === Regional restrictions ===
     if side == "right":
         x_min = int(bg_width * 0.67)
         x_max = bg_width - shape_width
@@ -60,7 +60,7 @@ def paste_shape_no_overlap(background, shape_path, side, existing_bboxes, scale_
         x_min = 0
         x_max = int(bg_width * 0.33) - shape_width
 
-    # === 6. 查找合适位置（不重叠）===
+    # === Find suitable locations (no overlap)===
     for _ in range(max_attempts):
         x = random.randint(x_min, max(x_min + 1, x_max))
         y = random.randint(0, bg_height - shape_height)
