@@ -61,9 +61,9 @@ def train_model(image_dir, xml_dir, num_epochs=10, output_path="fasterrcnn_model
     dataset = ShapeDataset(image_dir, xml_dir, transforms=F.to_tensor)
     dataloader = DataLoader(dataset, batch_size=2, shuffle=True, collate_fn=collate_fn)
 
-    model = fasterrcnn_resnet50_fpn(pretrained=True)
+    model = fasterrcnn_resnet50_fpn(weights=torchvision.models.detection.FasterRCNN_ResNet50_FPN_Weights.DEFAULT)
     in_features = model.roi_heads.box_predictor.cls_score.in_features
-    model.roi_heads.box_predictor = torchvision.models.detection.faster_rcnn.FastRCNNPredictor(in_features, num_classes=2)  # 1类 + 背景
+    model.roi_heads.box_predictor = torchvision.models.detection.faster_rcnn.FastRCNNPredictor(in_features, num_classes=2) 
 
     model.to(device)
     params = [p for p in model.parameters() if p.requires_grad]
@@ -73,6 +73,12 @@ def train_model(image_dir, xml_dir, num_epochs=10, output_path="fasterrcnn_model
         model.train()
         total_loss = 0
         for images, targets in tqdm(dataloader, desc=f"Epoch {epoch+1}/{num_epochs}"):
+            # Skip samples with empty bounding boxes
+            filtered = [(img, tgt) for img, tgt in zip(images, targets) if tgt["boxes"].numel() > 0]
+            if not filtered:
+                continue
+            images, targets = zip(*filtered)
+
             images = list(img.to(device) for img in images)
             targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
@@ -92,8 +98,8 @@ def train_model(image_dir, xml_dir, num_epochs=10, output_path="fasterrcnn_model
 
 if __name__ == "__main__":
     train_model(
-        image_dir=r"E:\zxz\project\images\generated_regions\images",
-        xml_dir=r"E:\zxz\project\images\generated_regions\xmls",
-        num_epochs=10,
-        output_path=r"C:\Users\ce-sh\Desktop\UCL\PHAS0077\analyse_elements\save\fasterrcnn_shapes.pth"
+        image_dir=r"E:\zxz\project\images\generated_regions_m\images",
+        xml_dir=r"E:\zxz\project\images\generated_regions_m\xmls",
+        num_epochs=20,
+        output_path=r"E:\zxz\project\models\fasterrcnn_shapes_m.pth"
     )
