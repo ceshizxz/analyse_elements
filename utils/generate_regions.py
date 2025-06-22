@@ -3,11 +3,11 @@ import random
 import xml.etree.ElementTree as ET
 from PIL import Image
 
-# Images to paste but NOT annotate in XML
+# Shapes not to annotate in XML
 CONFUSING_NAMES = {"no1.png", "no2.png", "no3.png"}
 
 def apply_transformations(shape, shrink=1.0):
-    # Apply random flip, stretch, and rotation to the shape image.
+    """Apply random flip, stretch, and rotation to the shape image."""
     from PIL import ImageOps
     import numpy as np
 
@@ -32,12 +32,16 @@ def apply_transformations(shape, shrink=1.0):
     return shape
 
 def paste_shape_absolute(background, shape, x, y):
-    # Paste shape at absolute coordinates and return its bounding box.
+    """Paste shape at absolute coordinates and return its bounding box."""
     background.paste(shape, (x, y), shape)
     return (x, y, x + shape.width, y + shape.height)
 
+def bboxes_overlap(b1, b2):
+    """Check if two bounding boxes overlap."""
+    return not (b1[2] <= b2[0] or b2[2] <= b1[0] or b1[3] <= b2[1] or b2[3] <= b1[1])
+
 def paste_random_nonoverlapping(background, shape, existing_bboxes, side, max_attempts=50):
-    # Paste shape in a non-overlapping location on the left or right side.
+    """Paste shape non-overlapping in left or right area with y-axis limits (5%~95%)."""
     bg_w, bg_h = background.size
     shape_w, shape_h = shape.size
 
@@ -48,8 +52,8 @@ def paste_random_nonoverlapping(background, shape, existing_bboxes, side, max_at
         x_min = 0
         x_max = int(bg_w * 0.33) - shape_w
 
-    y_min = int(bg_h * 0.05)  # Avoid top 5%
-    y_max = int(bg_h * 0.95) - shape_h  # Avoid bottom 5%
+    y_min = int(bg_h * 0.05)
+    y_max = int(bg_h * 0.95) - shape_h
 
     if x_max < x_min or y_max < y_min:
         return None
@@ -61,99 +65,74 @@ def paste_random_nonoverlapping(background, shape, existing_bboxes, side, max_at
         if all(not bboxes_overlap(new_bbox, b) for b in existing_bboxes):
             background.paste(shape, (x, y), shape)
             return new_bbox
-
     return None
 
-def bboxes_overlap(b1, b2):
-    # Check if two bounding boxes overlap.
-    return not (b1[2] <= b2[0] or b2[2] <= b1[0] or b1[3] <= b2[1] or b2[3] <= b1[1])
-
-def generate_image_with_shapes(background_path, shape_paths, output_image_path, output_xml_path, side="right"):
-    """Main image generation function with 3 layout modes: normal, vertical and horizontal overlap."""
+def generate_image_with_shapes(background_path, shape_paths, output_img_path, output_xml_path, side="right"):
+    """Generate one image with 0–5 shapes, and save as image + XML."""
     background = Image.open(background_path).convert("RGB")
     bg_w, bg_h = background.size
     bboxes = []
-    xml_boxes = []
-    names = [] 
-    mode = random.choices(["normal", "vertical", "horizontal"], weights=[0.8, 0.1, 0.1])[0]
-    shapes = random.choices(shape_paths, k=2)
+    names = []
+
+    count = random.choices([0, 1, 2, 3, 4, 5], weights=[5, 25, 25, 20, 15, 10])[0]
+
+    if count == 0:
+        background.save(output_img_path)
+        with open(output_xml_path, 'w') as f:
+            f.write('<annotation></annotation>')
+        return
+
+    # Load and transform shape images
     shape_imgs = []
-    for sp in shapes:
+    for _ in range(count):
+        sp = random.choice(shape_paths)
         shape = Image.open(sp).convert("RGBA")
-        shrink = 0.5 if mode == "horizontal" else 1.0
-        shape = apply_transformations(shape, shrink=shrink)
+        shape = apply_transformations(shape)
         shape_imgs.append((shape, os.path.basename(sp)))
 
-    if mode == "vertical":
-        # Stack shapes top and bottom
-        shape1, name1 = shape_imgs[0]
-        shape2, name2 = shape_imgs[1]
-        w1, h1 = shape1.size
-        w2, h2 = shape2.size
-
-        if side == "right":
-            x_min = int(bg_w * 0.67)
-            x_max = bg_w - w1
-        else:
-            x_min = 0
-            x_max = int(bg_w * 0.33) - w1
-
-        y_min = int(bg_h * 0.05)
-        y_max = int(bg_h * 0.95) - (h1 + h2)
-
-        for _ in range(50):
-            if x_max < x_min or y_max < 0:
-                break
-            x = random.randint(x_min, x_max)
-            y = random.randint(y_min, y_max)
-            bbox1 = paste_shape_absolute(background, shape1, x, y)
-            bbox2 = paste_shape_absolute(background, shape2, x, y + h1)
-            bboxes.extend([bbox1, bbox2])
-            names = [name1, name2]
-            break
-
-    elif mode == "horizontal":
-        # Stack shapes left and right, with 50% scaling
-        shape1, name1 = shape_imgs[0]
-        shape2, name2 = shape_imgs[1]
-        w1, h1 = shape1.size
-        w2, h2 = shape2.size
-
-        if side == "right":
-            x_min = int(bg_w * 0.67)
-            x_max = bg_w - w1 - w2
-        else:
-            x_min = 0
-            x_max = int(bg_w * 0.33) - w1 - w2
+    # First try adjacent placement if count ≥ 4
+    if count >= 4:
+        s1, n1 = shape_imgs.pop(0)
+        s2, n2 = shape_imgs.pop(0)
+        s1 = apply_transformations(s1, shrink=0.5)
+        s2 = apply_transformations(s2, shrink=0.5)
+        w1, h1 = s1.size
+        w2, h2 = s2.size
 
         y_min = int(bg_h * 0.05)
         y_max = int(bg_h * 0.95) - max(h1, h2)
 
-        for _ in range(50):
-            if x_max < x_min or y_max < 0:
-                break
-            x = random.randint(x_min, x_max)
-            y = random.randint(y_min, y_max)
-            bbox1 = paste_shape_absolute(background, shape1, x, y)
-            bbox2 = paste_shape_absolute(background, shape2, x + w1, y)
-            bboxes.extend([bbox1, bbox2])
-            names = [name1, name2]
-            break
+        if side == "right":
+            x_min = int(bg_w * 0.67)
+            x_max = bg_w - (w1 + w2)
+        else:
+            x_min = 0
+            x_max = int(bg_w * 0.33) - (w1 + w2)
 
-    else:
-        # Default: randomly place 1–2 shapes with no overlap
-        for shape, name in shape_imgs:
-            bbox = paste_random_nonoverlapping(background, shape, bboxes, side)
-            if bbox:
-                bboxes.append(bbox)
-                names.append(name)
+        if x_max >= x_min and y_max >= y_min:
+            for _ in range(50):
+                x = random.randint(x_min, x_max)
+                y = random.randint(y_min, y_max)
+                bbox1 = paste_shape_absolute(background, s1, x, y)
+                bbox2 = paste_shape_absolute(background, s2, x + w1, y)
+                if all(not bboxes_overlap(bbox1, b) and not bboxes_overlap(bbox2, b) for b in bboxes):
+                    bboxes.extend([bbox1, bbox2])
+                    names.extend([n1, n2])
+                    break
 
-    background.save(output_image_path)
+    # Paste remaining shapes
+    for shape, name in shape_imgs:
+        bbox = paste_random_nonoverlapping(background, shape, bboxes, side)
+        if bbox:
+            bboxes.append(bbox)
+            names.append(name)
 
-    # Write XML annotation (exclude confusing shapes)
+    background.save(output_img_path)
+
+    # Write XML
     annotation = ET.Element('annotation')
-    ET.SubElement(annotation, 'folder').text = os.path.basename(os.path.dirname(output_image_path))
-    ET.SubElement(annotation, 'filename').text = os.path.basename(output_image_path)
+    ET.SubElement(annotation, 'folder').text = os.path.basename(os.path.dirname(output_img_path))
+    ET.SubElement(annotation, 'filename').text = os.path.basename(output_img_path)
     size = ET.SubElement(annotation, 'size')
     ET.SubElement(size, 'width').text = str(bg_w)
     ET.SubElement(size, 'height').text = str(bg_h)
@@ -175,10 +154,11 @@ def generate_image_with_shapes(background_path, shape_paths, output_image_path, 
     tree = ET.ElementTree(annotation)
     tree.write(output_xml_path)
 
-def generate_combined(background_paths, shape_dir, output_image_dir, output_xml_dir, total_count=20):
-    # Main loop: generate multiple training images with bounding box labels.
-    os.makedirs(output_image_dir, exist_ok=True)
+def generate_combined(background_paths, shape_dir, output_img_dir, output_xml_dir, total_count=20):
+    """Main loop to generate images and annotations."""
+    os.makedirs(output_img_dir, exist_ok=True)
     os.makedirs(output_xml_dir, exist_ok=True)
+
     shape_paths = [
         os.path.join(shape_dir, f)
         for f in os.listdir(shape_dir)
@@ -188,44 +168,22 @@ def generate_combined(background_paths, shape_dir, output_image_dir, output_xml_
         raise ValueError(f"No shape images found in {shape_dir}")
 
     for i in range(total_count):
-        background_path = random.choice(background_paths)
-        side = "right" if "right" in os.path.basename(background_path) else "left"
-        output_img_path = os.path.join(output_image_dir, f"generated_{i}.jpg")
-        output_xml_path = os.path.join(output_xml_dir, f"generated_{i}.xml")
-        generate_image_with_shapes(background_path, shape_paths, output_img_path, output_xml_path, side)
+        bg_path = random.choice(background_paths)
+        side = "right" if "right" in os.path.basename(bg_path).lower() else "left"
+        img_out = os.path.join(output_img_dir, f"generated_{i}.jpg")
+        xml_out = os.path.join(output_xml_dir, f"generated_{i}.xml")
+        generate_image_with_shapes(bg_path, shape_paths, img_out, xml_out, side)
 
     print("Done!")
 
 if __name__ == "__main__":
     generate_combined(
         background_paths=[
-            r"E:\zxz\project\region_right.jpg",
-            r"E:\zxz\project\region_left.jpg"
-        ],
-        shape_dir=r"E:\zxz\project\shapes\c",
-        output_image_dir=r"E:\zxz\project\images\generated_regions_c\images",
-        output_xml_dir=r"E:\zxz\project\images\generated_regions_c\xmls",
-        total_count=500
-    )
-
-    generate_combined(
-        background_paths=[
-            r"E:\zxz\project\region_right.jpg",
-            r"E:\zxz\project\region_left.jpg"
-        ],
-        shape_dir=r"E:\zxz\project\shapes\e",
-        output_image_dir=r"E:\zxz\project\images\generated_regions_e\images",
-        output_xml_dir=r"E:\zxz\project\images\generated_regions_e\xmls",
-        total_count=500
-    )
-
-    generate_combined(
-        background_paths=[
-            r"E:\zxz\project\region_right.jpg",
-            r"E:\zxz\project\region_left.jpg"
+            r"E:\zxz\project\region_right.png",
+            r"E:\zxz\project\region_left.png"
         ],
         shape_dir=r"E:\zxz\project\shapes\m",
-        output_image_dir=r"E:\zxz\project\images\generated_regions_m\images",
-        output_xml_dir=r"E:\zxz\project\images\generated_regions_m\xmls",
-        total_count=500
+        output_img_dir=r"E:\zxz\project\images\generated_regions_b\images",
+        output_xml_dir=r"E:\zxz\project\images\generated_regions_b\xmls",
+        total_count=600
     )
